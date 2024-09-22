@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# This script calculates SHA-1 checksums for ROM files and ROM files inside ZIP
+# archives, ignoring ROM headers. Which is particularly useful to check for
+# romhack compatibility.
+# Currently only NES headers are ignored. Please let me know if there is demand
+# for more headered file types.
+# The script requires GNU coreutils and at least Bash 4.4.
+# Homepage: https://github.com/hippie68/rom-sha1sum
+
+# TODO: full error handling, 7z and gzip decompression
+
+MAX_DECOMPRESSION_RECURSION_LVL=0 # Increase to enable nested archive scanning.
+FILE_EXTENSIONS='3ds|gb|gba|gbc|gcm|gcz|gen|gg|md|n64|ngc|ngp|nds|nes|nez|nsp|pce|sfc|smc|smd|srl|v64|vb|vpk|ws|wsc|xci|xiso|z64|zip' # Note: additional archives must be handled in print_checksum().
+FILE_EXT_REGEX="\\.($FILE_EXTENSIONS)\$"
+
+print_usage() {
+    echo "Usage: $0 FILENAME [...]"
+}
+
+get_magic() {
+    head --bytes=4 "$1" | tr -d '\000'
+}
+
+# Do sha1sum for file $1, but skip $2 bytes. $3: archive name
+sha1sum_skip_n() {
+    tail --bytes=+$(("$2" + 1)) "$1" | sha1sum | head -c 40
+    echo -n "  $(basename "$1")"
+    if [[ $2 -gt 0 ]]; then
+        echo -en " \033[1;32m[H]\033[0m"
+    fi
+    if [[ $3 ]]; then
+        echo -e " \033[1;30m[$3]\033[0m"
+    else
+        echo
+    fi
+}
+
+file_error() {
+    echo -e "                                          $1 \033[1;31m[$2]\033[0m" >&2
+}
+
+# $1: filename, $2: recursion level, $3: archive name
+print_checksum() {
+    case $(get_magic "$1") in
+        $'NES\x1a')
+            sha1sum_skip_n "$1" 16 "$3"
+            ;;
+        $'PK\x03\x04') # ZIP
+            if [[ $2 -gt $MAX_DECOMPRESSION_RECURSION_LVL ]]; then
+                file_error "$1" "Ignoring nested ZIP file (too many recursions)"
+                return
+            fi
+
+            local tmp_dir
+            if ! tmp_dir=$(mktemp --directory); then exit 1; fi
+            unzip "$1" -d "$tmp_dir" > /dev/null
+            readarray -d '' files < <(find "$tmp_dir" -type f -regextype posix-extended -regex ".*$FILE_EXT_REGEX" -print0)
+            for file in "${files[@]}"; do
+                print_checksum "$file" $(($2 + 1)) "$1"
+            done
+            rm -r "$tmp_dir" || exit 1
+            ;;
+        *)
+            shopt -s nocasematch
+            if [[ $1 =~ $FILE_EXT_REGEX ]]; then
+                [[ $1 == *.md ]] && [[ $(file "$1") == *text* ]] && return
+                sha1sum_skip_n "$1" 0 "$3"
+            else
+                file_error "$1" "Unknown file extension"
+            fi
+            shopt -u nocasematch
+            ;;
+    esac
+}
+
+if [[ ! $1 ]]; then
+    print_usage
+    exit 0
+fi
+
+for file in "$@"; do
+    if [[ ! -f $file ]]; then
+        file_error "$file" "Not a file"
+    else
+        print_checksum "$file" 0
+    fi
+done
