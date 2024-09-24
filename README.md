@@ -1,8 +1,12 @@
 # rom-sha1sum
-This script calculates SHA-1 checksums for ROM files and ROM files inside ZIP archives, ignoring ROM headers. Which is particularly useful to check for romhack compatibility.
+This script calculates SHA-1 checksums for ROM files and ROM files inside archives, ignoring ROM headers. Which is particularly useful to check for romhack compatibility.
 
 Currently only NES headers are ignored. Please let me know if there is demand for more headered file types.  
 The script requires GNU coreutils and at least Bash 4.4.
+For archive support, the following programs are required:
+- unzip for .zip files
+- gunzip for .gz files
+- 7za for .7z files
 
 Sample output:
 
