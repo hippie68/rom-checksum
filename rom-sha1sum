@@ -1,21 +1,23 @@
 #!/bin/bash
 
-# This script calculates SHA-1 checksums for ROM files and ROM files inside ZIP
+# This script calculates SHA-1 checksums for ROM files and ROM files inside
 # archives, ignoring ROM headers. Which is particularly useful to check for
 # romhack compatibility.
 # Currently only NES headers are ignored. Please let me know if there is demand
 # for more headered file types.
 # The script requires GNU coreutils and at least Bash 4.4.
-# Homepage: https://github.com/hippie68/rom-sha1sum
+# For archive support, the following programs are required:
+# - unzip for .zip files
+# - gunzip for .gz files
+# - 7za for .7z files
+# Project homepage: https://github.com/hippie68/rom-sha1sum
 
-# TODO: full error handling, 7z and gzip decompression
-
-MAX_DECOMPRESSION_RECURSION_LVL=0 # Increase to enable nested archive scanning.
-FILE_EXTENSIONS='3ds|gb|gba|gbc|gcm|gcz|gen|gg|md|n64|ngc|ngp|nds|nes|nez|nsp|pce|sfc|smc|smd|srl|v64|vb|vpk|ws|wsc|xci|xiso|z64|zip' # Note: additional archives must be handled in print_checksum().
-FILE_EXT_REGEX="\\.($FILE_EXTENSIONS)\$"
+MAX_DECOMPRESSION_RECURSION_LVL=1 # Increase to parse deeply nested archives.
+FILE_EXTENSIONS=(3ds gb gba gbc gcm gcz gen gg md n64 ngc ngp nds nes nez nsp pce sfc smc smd srl v64 vb vpk ws wsc xci xiso z64 zip gz 7z) # Note: additional archives must be handled in print_checksum().
+IFS=\| FILE_EXT_REGEX="\\.(${FILE_EXTENSIONS[*]})\$"
 
 print_usage() {
-    echo "Usage: $0 FILENAME [...]"
+    echo "Usage: $(basename "$0") FILE/DIRECTORY [...]"
 }
 
 get_magic() {
@@ -36,8 +38,25 @@ sha1sum_skip_n() {
     fi
 }
 
-file_error() {
-    echo -e "                                          $1 \033[1;31m[$2]\033[0m" >&2
+error() {
+    echo -e "\033[1;31mERROR: \033[0m$1" >&2
+}
+
+# $1: filename, $2: recursion level
+max_recursion_reached() {
+    if [[ $2 -gt $MAX_DECOMPRESSION_RECURSION_LVL ]]; then
+        error "Ignoring nested archive file (too many recursions): \"$1\""
+        return 0
+    fi
+    return 1
+}
+
+create_archive_wildcards() {
+    declare -ag ARCHIVE_FILE_WILDCARDS
+    ARCHIVE_FILE_WILDCARDS=("${FILE_EXTENSIONS[@]}")
+    for ((i = 0; i < ${#ARCHIVE_FILE_WILDCARDS[@]}; i++)) {
+        ARCHIVE_FILE_WILDCARDS[i]="*?.${ARCHIVE_FILE_WILDCARDS[$i]}"
+    }
 }
 
 # $1: filename, $2: recursion level, $3: archive name
@@ -47,18 +66,47 @@ print_checksum() {
             sha1sum_skip_n "$1" 16 "$3"
             ;;
         $'PK\x03\x04') # ZIP
-            if [[ $2 -gt $MAX_DECOMPRESSION_RECURSION_LVL ]]; then
-                file_error "$1" "Ignoring nested ZIP file (too many recursions)"
-                return
-            fi
-
+            max_recursion_reached "$1" "$2" && return
+            [[ ! -v ARCHIVE_FILE_WILDCARDS ]] && create_archive_wildcards
             local tmp_dir
-            if ! tmp_dir=$(mktemp --directory); then exit 1; fi
-            unzip "$1" -d "$tmp_dir" > /dev/null
-            readarray -d '' files < <(find "$tmp_dir" -type f -regextype posix-extended -regex ".*$FILE_EXT_REGEX" -print0)
-            for file in "${files[@]}"; do
-                print_checksum "$file" $(($2 + 1)) "$1"
-            done
+            tmp_dir=$(mktemp --directory) || exit 1
+            unzip -d "$tmp_dir" "$1" "${ARCHIVE_FILE_WILDCARDS[@]}" &> /dev/null
+            local ret=$?
+            if [[ $ret -eq 0 || $ret -eq 11 ]]; then
+                readarray -d '' < <(find "$tmp_dir" -type f -print0)
+                for file in "${MAPFILE[@]}"; do
+                    print_checksum "$file" $(($2 + 1)) "$1"
+                done
+            else
+                error "Could not extract file \"$1\""
+            fi
+            rm -r "$tmp_dir" || exit 1
+            ;;
+        $'\x1f\x8b'*) # gzip
+            max_recursion_reached "$1" "$2" && return
+            local tmp_dir
+            tmp_dir=$(mktemp --directory) || exit 1
+            tmp_file="$tmp_dir/${1%.gz}"
+            if gunzip --to-stdout "$1" > "$tmp_file"; then
+                print_checksum "$tmp_file" $(($2 + 1)) "$1"
+            else
+                error "Could not extract file \"$1\""
+            fi
+            rm -r "$tmp_dir"
+            ;;
+        $'7z\xbc\xaf')
+            max_recursion_reached "$1" "$2" && return
+            [[ ! -v ARCHIVE_FILE_WILDCARDS ]] && create_archive_wildcards
+            local tmp_dir
+            tmp_dir=$(mktemp --directory) || exit 1
+            if 7za x -o"$tmp_dir" "$1" "${ARCHIVE_FILE_WILDCARDS[@]}" > /dev/null; then
+                readarray -d '' < <(find "$tmp_dir" -type f -print0)
+                for file in "${MAPFILE[@]}"; do
+                    print_checksum "$file" $(($2 + 1)) "$1"
+                done
+            else
+                error "Could not extract file \"$1\""
+            fi
             rm -r "$tmp_dir" || exit 1
             ;;
         *)
@@ -67,7 +115,7 @@ print_checksum() {
                 [[ $1 == *.md ]] && [[ $(file "$1") == *text* ]] && return
                 sha1sum_skip_n "$1" 0 "$3"
             else
-                file_error "$1" "Unknown file extension"
+                error "Unknown file extension: \"$1\""
             fi
             shopt -u nocasematch
             ;;
@@ -79,10 +127,19 @@ if [[ ! $1 ]]; then
     exit 0
 fi
 
-for file in "$@"; do
-    if [[ ! -f $file ]]; then
-        file_error "$file" "Not a file"
+parse_file() {
+    if [[ -d $1 ]]; then
+        readarray -d '' files < <(find "$1" -type f -regextype posix-extended -regex ".*$FILE_EXT_REGEX" -print0)
+        for f in "${files[@]}"; do
+            parse_file "$f"
+        done
+    elif [[ ! -f $1 ]]; then
+        error "Not a file: \"$1\""
     else
-        print_checksum "$file" 0
+        print_checksum "$1" 0
     fi
+}
+
+for file in "$@"; do
+    parse_file "$file"
 done
