@@ -27,4 +27,4 @@ a12d74c73a0481599a5d832361d168f4737bbcf6  The Legend of Zelda (headerless).nes
 7dc9ee45e1ba0395e69e99a2bc36649e0a8e03fc  zelda_headered.zip
 ```
 
-Currently only NES headers are ignored. Please let me know if there is demand for more headered file types.
+The script displays SHA-1 checksums for all kinds of ROM files, but currently only NES headers are ignored. Please let me know if there is demand for more headered file types.
