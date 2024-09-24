@@ -13,7 +13,7 @@
 # Project homepage: https://github.com/hippie68/rom-sha1sum
 
 MAX_DECOMPRESSION_RECURSION_LVL=1 # Increase to parse deeply nested archives.
-FILE_EXTENSIONS=(3ds gb gba gbc gcm gcz gen gg md n64 ngc ngp nds nes nez nsp pce sfc smc smd srl v64 vb vpk ws wsc xci xiso z64 zip gz 7z) # Note: additional archives must be handled in print_checksum().
+FILE_EXTENSIONS=(3ds gb gba gbc gcm gcz gen gg md n64 ngc ngp nds nes nez nsp pce sfc smc smd srl v64 vb vpk ws wsc xci xiso z64 zip gz 7z) # Note: additional archives must be handled in process_file().
 IFS=\| FILE_EXT_REGEX="\\.(${FILE_EXTENSIONS[*]})\$"
 
 print_usage() {
@@ -24,17 +24,39 @@ get_magic() {
     head --bytes=4 "$1" | tr -d '\000'
 }
 
+# $1: filename, $2: offset, $3: variable name
+sha1sum_to_var() {
+    local -n sha1=$3
+    if [[ $2 -ne 0 ]]; then
+        sha1=$(tail --bytes=+$(("$2" + 1)) "$1" | sha1sum)
+    else
+        sha1=$(sha1sum "$1")
+    fi
+    sha1=${sha1:0:40}
+}
+
+# $1: checksum, $2: filename, $3: suffix, $4: archive chain
+print_checksum() {
+    echo -n "$1  "
+    echo -n "$2"
+    [[ $3 ]] && echo -en " \033[1;32m$3\033[0m"
+    [[ $4 ]] && echo -en " \033[1;30m$4\033[0m"
+    echo
+}
+
 # Do sha1sum for file $1, but skip $2 bytes. $3: archive name
 sha1sum_skip_n() {
-    tail --bytes=+$(("$2" + 1)) "$1" | sha1sum | head -c 40
-    echo -n "  $(basename "$1")"
+    local sha1_full
+    sha1sum_to_var "$1" 0 sha1_full
+    local filename
+    filename=$(basename "$1")
     if [[ $2 -gt 0 ]]; then
-        echo -en " \033[1;32m[H]\033[0m"
-    fi
-    if [[ $3 ]]; then
-        echo -e " \033[1;30m[$3]\033[0m"
+        local sha1_without_header
+        sha1sum_to_var "$1" "$2" sha1_without_header
+        print_checksum "$sha1_without_header" "$filename" "[-H]" "$3"
+        print_checksum "$sha1_full"  "$filename" "[+H]" "$3"
     else
-        echo
+        print_checksum "$sha1_full" "$filename" "" "$3"
     fi
 }
 
@@ -59,11 +81,22 @@ create_archive_wildcards() {
     }
 }
 
-# $1: filename, $2: recursion level, $3: archive name
-print_checksum() {
+# $1: current archive chain, $2: nested archive
+update_archive_chain() {
+    local -n chain=$1
+    if [[ $chain ]]; then
+        chain="< $(basename "$2") $chain"
+    else
+        chain="< $2"
+    fi
+}
+
+# $1: filename, $2: recursion level, $3: archive chain
+process_file() {
+    local archive_chain=$3
     case $(get_magic "$1") in
         $'NES\x1a')
-            sha1sum_skip_n "$1" 16 "$3"
+            sha1sum_skip_n "$1" 16 "$archive_chain"
             ;;
         $'PK\x03\x04') # ZIP
             max_recursion_reached "$1" "$2" && return
@@ -73,12 +106,13 @@ print_checksum() {
             unzip -d "$tmp_dir" "$1" "${ARCHIVE_FILE_WILDCARDS[@]}" &> /dev/null
             local ret=$?
             if [[ $ret -eq 0 || $ret -eq 11 ]]; then
+                update_archive_chain archive_chain "$1"
                 readarray -d '' < <(find "$tmp_dir" -type f -print0)
                 for file in "${MAPFILE[@]}"; do
-                    print_checksum "$file" $(($2 + 1)) "$1"
+                    process_file "$file" $(($2 + 1)) "$archive_chain"
                 done
             else
-                error "Could not extract file \"$1\""
+                error "Could not extract ZIP file \"$1\""
             fi
             rm -r "$tmp_dir" || exit 1
             ;;
@@ -88,11 +122,12 @@ print_checksum() {
             tmp_dir=$(mktemp --directory) || exit 1
             tmp_file="$tmp_dir/${1%.gz}"
             if gunzip --to-stdout "$1" > "$tmp_file"; then
-                print_checksum "$tmp_file" $(($2 + 1)) "$1"
+                update_archive_chain archive_chain "$1"
+                process_file "$tmp_file" $(($2 + 1)) "$archive_chain"
             else
-                error "Could not extract file \"$1\""
+                error "Could not extract gzip file \"$1\""
             fi
-            rm -r "$tmp_dir"
+            rm -r "$tmp_dir" || exit 1
             ;;
         $'7z\xbc\xaf')
             max_recursion_reached "$1" "$2" && return
@@ -100,12 +135,13 @@ print_checksum() {
             local tmp_dir
             tmp_dir=$(mktemp --directory) || exit 1
             if 7za x -o"$tmp_dir" "$1" "${ARCHIVE_FILE_WILDCARDS[@]}" > /dev/null; then
+                update_archive_chain archive_chain "$1"
                 readarray -d '' < <(find "$tmp_dir" -type f -print0)
                 for file in "${MAPFILE[@]}"; do
-                    print_checksum "$file" $(($2 + 1)) "$1"
+                    process_file "$file" $(($2 + 1)) "$archive_chain"
                 done
             else
-                error "Could not extract file \"$1\""
+                error "Could not extract 7-Zip file \"$1\""
             fi
             rm -r "$tmp_dir" || exit 1
             ;;
@@ -136,7 +172,7 @@ parse_file() {
     elif [[ ! -f $1 ]]; then
         error "Not a file: \"$1\""
     else
-        print_checksum "$1" 0
+        process_file "$1" 0
     fi
 }
 
