@@ -6,6 +6,7 @@ For archive support, the following programs are required:
 - unzip for .zip files
 - gunzip for .gz files
 - 7za for .7z files
+
 For optional CRC32 support, the Perl script "crc32" is required, which for Debian-based distros is included in the package "libarchive-zip-perl".
 
 Usage:
