@@ -27,8 +27,8 @@ print_usage() {
 Usage: $(basename "$0") FILE/DIRECTORY [...]
 
 Options:
-  -e LIST  Only process files that have one the file extensions specified
-           without dots in comma-separated argument LIST.
+  -e LIST  Only process files whose file extensions are specified in comma-
+           separated argument LIST (without dots).
   -r       Parse directories recursively.
 EOF
 }
