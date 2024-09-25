@@ -118,7 +118,7 @@ print_checksums() {
     local crc32 md5 sha1
     if [[ ! -v opt_crc32_disabled ]]; then
         crc32_to_var "$1" 0 crc32
-        print_checksum "File CRC32" "$crc32"
+        print_checksum "File CRC32" "$crc32 ($((0x$crc32)))"
     fi
     md5sum_to_var "$1" 0 md5
     print_checksum "File MD5" "$md5"
@@ -128,11 +128,11 @@ print_checksums() {
     if [[ $2 -gt 0 ]]; then
         if [[ ! -v opt_crc32_disabled ]]; then
             crc32_to_var "$1" "$2" crc32
-            md5sum_to_var "$1" "$2" md5
+            print_checksum "ROM CRC32" "$crc32 ($((0x$crc32)))"
         fi
-        sha1sum_to_var "$1" "$2" sha1
-        print_checksum "ROM CRC32" "$crc32"
+        md5sum_to_var "$1" "$2" md5
         print_checksum "ROM MD5" "$md5"
+        sha1sum_to_var "$1" "$2" sha1
         print_checksum "ROM SHA-1"  "$sha1"
     fi
 
