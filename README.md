@@ -7,6 +7,17 @@ For archive support, the following programs are required:
 - gunzip for .gz files
 - 7za for .7z files
 
+Usage:
+```
+Usage: rom-sha1sum FILE/DIRECTORY [...]
+
+Options:
+  -e LIST  Only process files whose file extensions are specified in comma-
+           separated argument LIST (without dots).
+  -r       Parse directories recursively.
+
+```
+
 Sample output:
 
 ```
