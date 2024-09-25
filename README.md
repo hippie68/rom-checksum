@@ -16,7 +16,6 @@ Options:
   -e LIST  Only process files whose file extensions are specified in comma-
            separated argument LIST (without dots).
   -r       Parse directories recursively.
-
 ```
 
 Sample output:
